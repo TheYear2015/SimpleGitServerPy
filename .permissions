@@ -1,0 +1,12 @@
+{
+    "test.git": {
+        "admin": "rw",
+        "user1": "r",
+        "user2": "r"
+    },
+    "test2.git": {
+        "admin": "rw",
+        "user1": "rw",
+        "user2": "r"
+    }
+}
