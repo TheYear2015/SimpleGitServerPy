@@ -3,10 +3,82 @@ import sys
 import http.server
 import socketserver
 import subprocess
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 import base64
 import json
-from permission_control import PermissionControl  # 添加导入语句
+import logging
+from logging.handlers import RotatingFileHandler
+from permission_control import PermissionControl
+import argparse
+
+# 全局配置对象
+SERVER_CONFIG = {}
+
+# 配置日志
+def setup_logger(logger):
+    """Setup logging system with daily rotating files"""
+    # Get log directory from config, fallback to default using current working directory
+    log_dir = SERVER_CONFIG['log_dir']
+    os.makedirs(log_dir, exist_ok=True)
+    
+    # Set log file path
+    log_file = os.path.join(log_dir, 'git_server.log')
+    
+    logger.setLevel(logging.INFO)
+    
+    # Create TimedRotatingFileHandler with the properly formatted filename
+    file_handler = logging.handlers.TimedRotatingFileHandler(
+        log_file,
+        when='midnight',     # Rotate at midnight
+        interval=1,          # One day per file
+        backupCount=2,       # Keep 2 backup files (3 files total)
+        encoding='utf-8'
+    )
+    
+    # Create console handler
+    console_handler = logging.StreamHandler()
+    
+    # Set log format
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    file_handler.setFormatter(formatter)
+    console_handler.setFormatter(formatter)
+    
+    # Add handlers
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+    
+    return logger
+
+# 初始化日志系统
+logger = logging.getLogger('GitServer')
+
+def load_server_config(config_path=None):
+    """加载服务器配置"""
+    if config_path is None:
+        config_path = os.path.join(os.getcwd(), 'config.json')
+    
+    try:
+        with open(config_path, 'r') as f:
+            config = json.load(f)
+            
+        # 验证必需的配置项
+        required_keys = ['git_repo_path', 'git_http_backend', 'log_dir']
+        for key in required_keys:
+            if key not in config:
+                raise KeyError(key)
+        
+        return config
+    except FileNotFoundError:
+        logger.error(f"Configuration file not found at {config_path}")
+        sys.exit(1)
+    except KeyError as e:
+        logger.error(f"Missing required configuration key: {e}")
+        sys.exit(1)
+    except json.JSONDecodeError:
+        logger.error(f"Invalid JSON format in configuration file")
+        sys.exit(1)
 
 COMMANDS_READONLY = [
     'git-upload-pack',
@@ -24,32 +96,22 @@ COMMANDS_ALL = COMMANDS_READONLY + COMMANDS_WRITE
 
 class GitHttpServer(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
-        # 加载配置
-        self.load_config()
-        # 调用父类初始化
+        self.git_repo_path = SERVER_CONFIG['git_repo_path']
+        self.git_http_backend = SERVER_CONFIG['git_http_backend']
+        self.server_port = SERVER_CONFIG['server_port']
+        
+        # Create .conf directory if it doesn't exist
+        conf_dir = os.path.join(self.git_repo_path, 'conf')
+        if not os.path.exists(conf_dir):
+            os.makedirs(conf_dir)
+        
+        # Store config files in .conf directory
+        self.htpasswd_file = os.path.join(conf_dir, '.htpasswd')
+        self.permission_file = os.path.join(conf_dir, '.permissions')
+        
+        # Call parent class initialization
         super().__init__(*args, **kwargs)
     
-    def load_config(self):
-        """从配置文件加载服务器配置"""
-        config_path = os.path.join(os.path.dirname(__file__), 'config.json')
-        try:
-            with open(config_path, 'r') as f:
-                config = json.load(f)
-                self.git_repo_path = config['git_repo_path']
-                self.git_http_backend = config['git_http_backend']
-                # 在git仓库根目录下设置htpasswd和permission文件
-                self.htpasswd_file = os.path.join(self.git_repo_path, '.htpasswd')
-                self.permission_file = os.path.join(self.git_repo_path, '.permissions')
-        except FileNotFoundError:
-            print(f"错误：找不到配置文件 {config_path}")
-            sys.exit(1)
-        except KeyError as e:
-            print(f"错误：缺少必需的配置键：{e}")
-            sys.exit(1)
-        except json.JSONDecodeError:
-            print(f"错误：配置文件中的JSON格式无效")
-            sys.exit(1)
-
     def do_GET(self):
         """处理HTTP GET请求
         验证用户身份并处理Git相关请求"""
@@ -84,7 +146,7 @@ class GitHttpServer(http.server.SimpleHTTPRequestHandler):
             if self.verify_password(username, password):
                 return True, username  # 返回验证成功的用户名
         except Exception as e:
-            print(f"Authentication error: {str(e)}")
+            logger.warning(f"Authentication error: {str(e)}")
         
         self.send_authenticate()
         return False, None
@@ -102,6 +164,7 @@ class GitHttpServer(http.server.SimpleHTTPRequestHandler):
         """服务器初始化设置
         初始化权限控制系统并调用父类初始化方法"""
         # 初始化权限控制
+        logger.info("Initializing permission control")  # Debug log
         self.permission_control = PermissionControl(self.permission_file)
         super().setup()
     
@@ -121,7 +184,7 @@ class GitHttpServer(http.server.SimpleHTTPRequestHandler):
         """处理Git HTTP请求"""
         parsed_path = urlparse(self.path)
         path = parsed_path.path.lstrip('/')
-        print(f"Handling {self.command} request for: {path}")
+        logger.info(f"Processing {self.command} request for: {path}")
 
         # 检查仓库是否存在
         if not self._check_repository(path):
@@ -156,7 +219,7 @@ class GitHttpServer(http.server.SimpleHTTPRequestHandler):
 
     def _check_repository(self, path):
         """检查仓库是否存在"""
-        print(f"Checking repository: {path}")
+        logger.info(f"Checking repository path: {path}")
       
         # 从路径中获取仓库名称
         repo_name = self._get_repo_name(path)
@@ -218,10 +281,11 @@ class GitHttpServer(http.server.SimpleHTTPRequestHandler):
             'SERVER_PROTOCOL': self.protocol_version,
             'HTTP_HOST': self.headers.get('host', ''),
             'SERVER_NAME': 'localhost',
-            'SERVER_PORT': str(8000)
+            'SERVER_PORT': str(self.server_port)  # Use actual server port
         })
 
-        print(path)
+        logger.debug(f"Git environment for {username}: {env}")
+
         # Git提交相关环境变量
         if self._get_access_type(path) == "write":
             env['GIT_HTTP_BACKEND_ENABLE_RECEIVE_PACK'] = '1'
@@ -238,7 +302,8 @@ class GitHttpServer(http.server.SimpleHTTPRequestHandler):
                 env=env,
                 stdout=subprocess.PIPE,
                 stdin=subprocess.PIPE,
-                stderr=subprocess.PIPE
+                stderr=subprocess.PIPE,
+                shell=False,
             )
 
             # 处理请求数据
@@ -251,13 +316,13 @@ class GitHttpServer(http.server.SimpleHTTPRequestHandler):
 
             # 处理错误输出
             if stderr:
-                print(f"Git backend error: {stderr.decode('utf-8')}")
+                logger.error(f"Git backend error: {stderr.decode('utf-8')}")
 
             # 处理响应
             self._handle_git_response(stdout)
 
         except Exception as e:
-            print(f"Error: {str(e)}")
+            logger.error(f"Error executing git backend: {str(e)}")
             self.send_error(500, str(e))
 
     def _handle_git_response(self, stdout):
@@ -310,24 +375,84 @@ class GitHttpServer(http.server.SimpleHTTPRequestHandler):
         if not repo_name.endswith('.git'):
             repo_name = f"{repo_name}.git"
         
-        print(f"Checking permission for {username} on {repo_name} ({access_type})")  # Debug logging
+        logger.info(f"Checking permissions: user={username}, repo={repo_name}, access={access_type}")
         return self.permission_control.check_permission(repo_name, username, access_type)
 
+    def log_message(self, format, *args):
+        """Override to log HTTP requests to our logger"""
+        message = f"{self.client_address[0]} - - [{self.log_date_time_string()}] {format%args}"
+        logger.info(message)
+
+def set_default_config():
+    global SERVER_CONFIG
+    """Set default values for optional configuration items"""
+    defaults = {
+        'server_port': 8000,
+        'log_dir': os.path.join(os.getcwd(), 'logs'),
+    }
+    
+    for key, default_value in defaults.items():
+        if key not in SERVER_CONFIG:
+            SERVER_CONFIG[key] = default_value
+
+def verify_git_backend():
+    """Verify that git-http-backend exists and is executable"""
+    backend_path = SERVER_CONFIG.get('git_http_backend')
+    if not backend_path:
+        logger.error("git_http_backend path not configured")
+        sys.exit(1)
+        
+    if not os.path.exists(backend_path):
+        logger.error(f"git-http-backend not found at: {backend_path}")
+        sys.exit(1)
+        
+    if not os.path.isfile(backend_path):
+        logger.error(f"git-http-backend path is not a file: {backend_path}")
+        sys.exit(1)
+        
+    if not os.access(backend_path, os.X_OK):
+        logger.error(f"git-http-backend is not executable: {backend_path}")
+        sys.exit(1)
+        
+    logger.info(f"git-http-backend verified at: {backend_path}")
+
 if __name__ == "__main__":
-    # 设置服务器端口
-    port = 8000
-    # handler = GitHttpServer()
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Git HTTP Server')
+    parser.add_argument('--config', '-c', 
+                       help='Path to config.json file',
+                       required=True)
+    args = parser.parse_args()
     
-    # # 创建Git仓库根目录
-    # if not os.path.exists(handler.git_repo_path):
-    #     os.makedirs(handler.git_repo_path)
+    # Load configuration and set defaults
+    SERVER_CONFIG.update(load_server_config(args.config))
+    set_default_config()
+       
+    setup_logger(logger)
     
-    # 启动服务器
+    # Verify git-http-backend before starting
+    verify_git_backend()
+ 
+    port = SERVER_CONFIG['server_port']
+    
+    # Log configuration info
+    logger.info("Server Configuration:")
+    logger.info("-" * 20)
+    logger.info(f"Config File: {args.config}")
+    logger.info(f"Repository Path: {SERVER_CONFIG['git_repo_path']}")
+    logger.info(f"HTTP Backend: {SERVER_CONFIG['git_http_backend']}")
+    logger.info(f"Log Directory: {SERVER_CONFIG['log_dir']}")  # 添加日志目录信息
+    logger.info(f"Server Port: {port}")
+    logger.info("-" * 20)
+    
+    # Start server
     with socketserver.TCPServer(("", port), GitHttpServer) as httpd:
-        print(f"Git HTTP Server running on port {port}...")
-        # print(f"Repository path: {handler.git_repo_path}")
+        logger.info(f"Git HTTP Server started on port {port}")
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:
-            print("\nShutting down the server...")
+            logger.info("Shutting down server...")
             httpd.server_close()
+        finally:
+            logger.info("Server stopped")
+            logger.info("-" * 20)

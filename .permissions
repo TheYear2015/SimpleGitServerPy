@@ -1,5 +1,5 @@
 {
-    "test.git": {
+    "test1.git": {
         "admin": "rw",
         "user1": "r",
         "user2": "r"

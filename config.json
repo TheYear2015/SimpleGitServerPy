@@ -1,4 +1,6 @@
 {
     "git_repo_path": "d:/git",
-    "git_http_backend": "C:/Program Files/Git/mingw64/libexec/git-core/git-http-backend.exe"
+    "git_http_backend": "C:/Program Files/Git/mingw64/libexec/git-core/git-http-backend.exe",
+    "server_port": 8000,
+    "log_dir":"./logs"
 }

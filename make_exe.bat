@@ -1,0 +1,1 @@
+C:\Python\Python312\Scripts\pyinstaller.exe -F git-server.py

@@ -2,10 +2,8 @@ import json
 
 class PermissionControl:
     def __init__(self, permission_file):
-        print("初始化权限控制")  # 调试日志
         self.permission_file = permission_file
         self.permissions = self.load_permissions()
-        print("已加载权限:", self.permissions)  # 调试日志
     
     def load_permissions(self):
         """从文件加载权限配置"""
