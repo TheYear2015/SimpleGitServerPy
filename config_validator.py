@@ -3,26 +3,28 @@ import logging
 from typing import Dict, Any
 
 class ConfigValidator:
-    """Configuration validator for Git HTTP Server"""
+    """Git HTTP Server 的配置验证器"""
     
+    # 必需的配置键
     REQUIRED_KEYS = ['git_repo_path', 'git_http_backend', 'log_dir']
+    # 默认配置
     DEFAULT_CONFIG = {
         'server_port': 8000,
-        'log_dir': None,  # Will be set to os.path.join(os.getcwd(), 'logs')
-        'max_request_size': 1024 * 1024 * 100,  # 100MB
-        'session_timeout': 3600,  # 1 hour
+        'log_dir': None,  # 将被设置为 os.path.join(os.getcwd(), 'logs')
+        'max_request_size': 1024 * 1024 * 100,  # 100 MB
+        'session_timeout': 3600,  # 1 小时
         'max_auth_attempts': 3
     }
     
     @staticmethod
     def validate_config(config: Dict[str, Any], logger: logging.Logger) -> Dict[str, Any]:
-        """Validate configuration and set defaults"""
-        # Verify required keys
+        """验证配置并设置默认值"""
+        # 验证必需的键
         for key in ConfigValidator.REQUIRED_KEYS:
             if key not in config:
                 raise KeyError(f"Missing required configuration key: {key}")
                 
-        # Set defaults for optional keys
+        # 为可选键设置默认值
         validated_config = config.copy()
         for key, default_value in ConfigValidator.DEFAULT_CONFIG.items():
             if key not in validated_config:
@@ -31,15 +33,15 @@ class ConfigValidator:
                 else:
                     validated_config[key] = default_value
                     
-        # Validate paths
+        # 验证路径
         ConfigValidator._validate_paths(validated_config, logger)
                     
         return validated_config
     
     @staticmethod
     def _validate_paths(config: Dict[str, Any], logger: logging.Logger) -> None:
-        """Validate all path configurations"""
-        # Validate git_repo_path
+        """验证所有路径配置"""
+        # 验证 git_repo_path
         if not os.path.exists(config['git_repo_path']):
             try:
                 os.makedirs(config['git_repo_path'])
@@ -47,7 +49,7 @@ class ConfigValidator:
             except OSError as e:
                 raise ValueError(f"Cannot create repository directory: {e}")
                 
-        # Validate git_http_backend
+        # 验证 git_http_backend
         backend_path = config['git_http_backend']
         if not os.path.exists(backend_path):
             raise ValueError(f"git-http-backend not found at: {backend_path}")
@@ -56,5 +58,5 @@ class ConfigValidator:
         if not os.access(backend_path, os.X_OK):
             raise ValueError(f"git-http-backend is not executable: {backend_path}")
             
-        # Validate and create log directory
+        # 验证并创建日志目录
         os.makedirs(config['log_dir'], exist_ok=True)

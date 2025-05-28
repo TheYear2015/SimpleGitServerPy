@@ -14,10 +14,10 @@ from typing import Dict, Tuple, Optional
 from permission_control import PermissionControl
 from config_validator import ConfigValidator
 
-# Global Configuration
+# 全局配置
 SERVER_CONFIG: Dict[str, any] = {}
 
-# Git Commands Constants
+# Git 命令常量
 COMMANDS_READONLY = [
     'git-upload-pack',
     'git upload-pack',
@@ -37,7 +37,7 @@ SERVER_CONFIG = {}
 
 # 配置日志
 def setup_logger(logger):
-    """Setup logging system with daily rotating files"""
+    """设置每日轮转的日志系统"""
     log_dir = SERVER_CONFIG['log_dir']
     os.makedirs(log_dir, exist_ok=True)
     
@@ -77,7 +77,7 @@ def load_server_config(config_path=None):
         with open(config_path, 'r') as f:
             config = json.load(f)
             
-        # 验证必需的配置项
+        # 验证必需的配置项（git_repo_path、git_http_backend、log_dir）
         required_keys = ['git_repo_path', 'git_http_backend', 'log_dir']
         for key in required_keys:
             if key not in config:
@@ -100,31 +100,31 @@ class GitHttpServer(http.server.SimpleHTTPRequestHandler):
         self.git_http_backend = SERVER_CONFIG['git_http_backend']
         self.server_port = SERVER_CONFIG['server_port']
         
-        # Create .conf directory if it doesn't exist
+        # 如果不存在则创建 .conf 目录
         conf_dir = os.path.join(self.git_repo_path, 'conf')
         os.makedirs(conf_dir, exist_ok=True)
         
-        # Store config files in .conf directory
+        # 在 .conf 目录中存储配置文件
         self.htpasswd_file = os.path.join(conf_dir, '.htpasswd')
         self.permission_file = os.path.join(conf_dir, '.permissions')
         
-        # Call parent class initialization
+        # 调用父类初始化
         super().__init__(*args, **kwargs)
     
     def do_GET(self):
-        """Handle HTTP GET requests"""
+        """处理 HTTP GET 请求"""
         success, username = self.authenticate()
         if success:
             self.handle_git_request(username)
 
     def do_POST(self):
-        """Handle HTTP POST requests"""
+        """处理 HTTP POST 请求"""
         success, username = self.authenticate()
         if success:
             self.handle_git_request(username)
 
     def authenticate(self) -> Tuple[bool, Optional[str]]:
-        """Basic user authentication"""
+        """基本用户认证"""
         auth_header = self.headers.get('Authorization')
         if not auth_header:
             self.send_authenticate()
@@ -147,7 +147,7 @@ class GitHttpServer(http.server.SimpleHTTPRequestHandler):
         return False, None
 
     def send_authenticate(self):
-        """Send authentication request"""
+        """发送认证请求"""
         self.send_response(401)
         self.send_header('WWW-Authenticate', 'Basic realm="Git Repository"')
         self.send_header('Content-type', 'text/html')
@@ -155,7 +155,7 @@ class GitHttpServer(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(b"Authentication required")
 
     def verify_password(self, username: str, password: str) -> bool:
-        """Verify user password"""
+        """验证用户密码"""
         try:
             with open(self.htpasswd_file, 'r') as f:
                 for line in f:
@@ -165,15 +165,15 @@ class GitHttpServer(http.server.SimpleHTTPRequestHandler):
         except FileNotFoundError:
             return False
         return False
-
+    
     def setup(self):
-        """Server initialization"""
+        """服务器初始化"""
         logger.info("Initializing permission control")
         self.permission_control = PermissionControl(self.permission_file)
         super().setup()
 
     def handle_git_request(self, username: str):
-        """Handle Git requests"""
+        """处理 Git 请求"""
         parsed_path = urlparse(self.path)
         path = parsed_path.path.lstrip('/')
         logger.info(f"Processing {self.command} request for: {path}")
@@ -186,21 +186,27 @@ class GitHttpServer(http.server.SimpleHTTPRequestHandler):
 
         env = self._setup_git_environment(path, username, parsed_path)
         self._execute_git_backend(env)
-
+        
     def _get_repo_name(self, path: str) -> Optional[str]:
-        """Get repository name from path"""
+        """从路径中获取仓库名称"""
+        if not path:
+            return None
+            
         repo_parts = path.split('/')
         if not repo_parts:
             return None
             
         repo_name = repo_parts[0]
+        if not repo_name:
+            return None
+            
         if not repo_name.endswith('.git'):
             repo_name = f"{repo_name}.git"
         
         return repo_name
 
     def _check_repository(self, path: str) -> bool:
-        """Check if repository exists"""
+        """检查仓库是否存在"""
         logger.info(f"Checking repository path: {path}")
         
         repo_name = self._get_repo_name(path)
@@ -216,7 +222,7 @@ class GitHttpServer(http.server.SimpleHTTPRequestHandler):
         return True
 
     def _get_access_type(self, path: str) -> str:
-        """Get access type from path"""
+        """获取访问类型"""
         access_type = 'read'
         for cmd in COMMANDS_WRITE:
             if cmd in path:
@@ -225,7 +231,7 @@ class GitHttpServer(http.server.SimpleHTTPRequestHandler):
         return access_type
 
     def _check_access_permission(self, path: str, username: str) -> bool:
-        """Check access permission"""
+        """检查访问权限"""
         access_type = self._get_access_type(path)
         if not self.check_permission(path, username, access_type):
             self.send_error(403, f"Permission denied: {username} does not have {access_type} access")
@@ -233,7 +239,7 @@ class GitHttpServer(http.server.SimpleHTTPRequestHandler):
         return True
 
     def _setup_git_environment(self, path: str, username: str, parsed_path) -> Dict[str, str]:
-        """Setup Git environment"""
+        """设置 Git 环境"""
         env = os.environ.copy()
         env.update({
             'REQUEST_METHOD': self.command,
@@ -260,7 +266,7 @@ class GitHttpServer(http.server.SimpleHTTPRequestHandler):
         return env
 
     def _execute_git_backend(self, env: Dict[str, str]):
-        """Execute git-http-backend"""
+        """执行 git-http-backend"""
         try:
             process = subprocess.Popen(
                 self.git_http_backend,
@@ -288,7 +294,7 @@ class GitHttpServer(http.server.SimpleHTTPRequestHandler):
             self.send_error(500, str(e))
 
     def _handle_git_response(self, stdout: bytes):
-        """Handle git response"""
+        """处理 git 响应"""
         if not stdout:
             self.send_error(500, "No response from git-http-backend")
             return
@@ -318,7 +324,7 @@ class GitHttpServer(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(response[1])
             
     def check_permission(self, repo_path: str, username: str, access_type: str) -> bool:
-        """Check user permission"""
+        """检查用户权限"""
         repo_name = self._get_repo_name(repo_path)
         if not repo_name:
             return False
@@ -330,13 +336,13 @@ class GitHttpServer(http.server.SimpleHTTPRequestHandler):
         return self.permission_control.check_permission(repo_name, username, access_type)
 
     def log_message(self, format: str, *args):
-        """Log message"""
+        """记录日志消息"""
         message = f"{self.client_address[0]} - - [{self.log_date_time_string()}] {format%args}"
         logger.info(message)
 
 def set_default_config():
+    """设置可选配置项的默认值"""
     global SERVER_CONFIG
-    """Set default values for optional configuration items"""
     defaults = {
         'server_port': 8000,
         'log_dir': os.path.join(os.getcwd(), 'logs'),
@@ -347,7 +353,7 @@ def set_default_config():
             SERVER_CONFIG[key] = default_value
 
 def verify_git_backend():
-    """Verify that git-http-backend exists and is executable"""
+    """验证 git-http-backend 是否存在且可执行"""
     backend_path = SERVER_CONFIG.get('git_http_backend')
     if not backend_path:
         logger.error("git_http_backend path not configured")
